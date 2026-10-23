@@ -1,0 +1,6 @@
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { LockKeyhole, ArrowRight } from 'lucide-react'
+import { api, getError } from '../lib/api'
+
+export default function Login(){const nav=useNavigate();const [email,setEmail]=useState('');const [password,setPassword]=useState('');const [error,setError]=useState('');const submit=async(e)=>{e.preventDefault();setError('');try{const {data}=await api.post('/auth/login',{email,password});localStorage.setItem('tmg_token',data.token);localStorage.setItem('tmg_admin',JSON.stringify(data.admin));nav('/admin')}catch(err){setError(getError(err))}};return <div className="auth-page"><div className="auth-card"><img src="/images/tmg-logo-banner.jpg" alt="TMG Ministries"/><span className="eyebrow">ADMIN PORTAL</span><h1>Welcome back.</h1><p>Manage the TMG Ministries website securely.</p><form onSubmit={submit}><label>Email<input required type="email" value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Password<input required type="password" value={password} onChange={e=>setPassword(e.target.value)}/></label>{error&&<div className="error">{error}</div>}<button className="btn btn-primary">Sign in <ArrowRight size={16}/></button></form><div className="secure"><LockKeyhole size={14}/> Protected administration area</div></div></div>}

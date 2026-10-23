@@ -1,0 +1,69 @@
+import 'dotenv/config'
+import express from 'express'
+import cors from 'cors'
+import bcrypt from 'bcryptjs'
+import jwt from 'jsonwebtoken'
+import crypto from 'crypto'
+import { connectDB } from './db.js'
+import { auth,allowRoles } from './middleware/auth.js'
+import { Admin,Sermon,Event,EventRegistration,PrayerRequest,ContactMessage,Ministry,Leadership,Announcement,BlogPost,Subscriber,Media,Document,Member,Attendance,Group,Volunteer,FollowUp,ChildCheckin,Donation,ActivityLog,Notification,ChurchSettings } from './models/index.js'
+
+const app=express()
+app.use(cors({origin:true,credentials:true}))
+app.use(express.json({limit:'2mb',verify:(req,_res,buf)=>{req.rawBody=Buffer.from(buf)}}))
+const paystackBase='https://api.paystack.co'
+const logAction=async(req,action,resource,resourceId='',details={})=>{try{await ActivityLog.create({adminId:req.admin?.id,adminEmail:req.admin?.email,action,resource,resourceId,details})}catch{}}
+
+app.get('/api/health',async(_req,res)=>{try{await connectDB();res.json({ok:true,service:'TMG Ministries API',database:'connected'})}catch(e){res.status(500).json({ok:false,message:'Database unavailable'})}})
+
+app.post('/api/auth/login',async(req,res)=>{try{await connectDB();const {email,password}=req.body;if(!email||!password)return res.status(400).json({message:'Email and password are required.'});const admin=await Admin.findOne({email:email.toLowerCase(),active:true});if(!admin||!(await bcrypt.compare(password,admin.passwordHash)))return res.status(401).json({message:'Invalid email or password.'});admin.lastLoginAt=new Date();await admin.save();const token=jwt.sign({id:admin._id,email:admin.email,role:admin.role,name:admin.name},process.env.JWT_SECRET,{expiresIn:'7d'});res.json({token,admin:{id:admin._id,email:admin.email,role:admin.role,name:admin.name}})}catch(e){res.status(500).json({message:'Login failed.'})}})
+
+const models={sermons:Sermon,events:Event,ministries:Ministry,leadership:Leadership,announcements:Announcement,media:Media,documents:Document,members:Member,attendance:Attendance,groups:Group,volunteers:Volunteer,followups:FollowUp,childcheckins:ChildCheckin,blog:BlogPost,notifications:Notification}
+for(const [path,Model] of Object.entries(models)){
+ app.get('/api/'+path,async(req,res)=>{try{await connectDB();const limit=Math.min(Number(req.query.limit)||200,500);res.json(await Model.find().sort({createdAt:-1}).limit(limit))}catch(e){res.status(500).json({message:'Could not load data.'})}})
+ app.get('/api/'+path+'/:id',async(req,res)=>{try{await connectDB();const item=await Model.findById(req.params.id);if(!item)return res.status(404).json({message:'Not found.'});res.json(item)}catch{res.status(400).json({message:'Invalid id.'})}})
+ app.post('/api/'+path,auth,async(req,res)=>{try{await connectDB();const item=await Model.create(req.body);await logAction(req,'create',path,item._id.toString());res.status(201).json(item)}catch(e){res.status(400).json({message:e.message})}})
+ app.put('/api/'+path+'/:id',auth,async(req,res)=>{try{await connectDB();const item=await Model.findByIdAndUpdate(req.params.id,req.body,{new:true,runValidators:true});if(!item)return res.status(404).json({message:'Not found.'});await logAction(req,'update',path,req.params.id);res.json(item)}catch(e){res.status(400).json({message:e.message})}})
+ app.delete('/api/'+path+'/:id',auth,allowRoles('super_admin','admin'),async(req,res)=>{try{await connectDB();await Model.findByIdAndDelete(req.params.id);await logAction(req,'delete',path,req.params.id);res.json({ok:true})}catch{res.status(400).json({message:'Could not delete item.'})}})
+}
+
+app.post('/api/messages',async(req,res)=>{try{await connectDB();const item=await ContactMessage.create(req.body);await Notification.create({title:'New contact message',message:`New message from ${req.body.name||req.body.email||'visitor'}`,type:'message',link:'/admin/messages'});res.status(201).json(item)}catch{res.status(400).json({message:'Please provide a valid message.'})}})
+app.get('/api/messages',auth,async(_req,res)=>{try{await connectDB();res.json(await ContactMessage.find().sort({createdAt:-1}))}catch{res.status(500).json({message:'Could not load messages.'})}})
+app.put('/api/messages/:id',auth,async(req,res)=>{try{await connectDB();res.json(await ContactMessage.findByIdAndUpdate(req.params.id,req.body,{new:true}))}catch{res.status(400).json({message:'Could not update message.'})}})
+app.delete('/api/messages/:id',auth,async(req,res)=>{try{await connectDB();await ContactMessage.findByIdAndDelete(req.params.id);res.json({ok:true})}catch{res.status(400).json({message:'Could not delete message.'})}})
+
+app.post('/api/prayers',async(req,res)=>{try{await connectDB();const item=await PrayerRequest.create(req.body);await Notification.create({title:'New prayer request',message:`A new prayer request was submitted by ${req.body.name||'someone'}`,type:'prayer',link:'/admin/prayers'});res.status(201).json(item)}catch{res.status(400).json({message:'Please provide your prayer request.'})}})
+app.get('/api/prayers',auth,async(_req,res)=>{try{await connectDB();res.json(await PrayerRequest.find().sort({createdAt:-1}))}catch{res.status(500).json({message:'Could not load prayer requests.'})}})
+app.put('/api/prayers/:id',auth,async(req,res)=>{try{await connectDB();res.json(await PrayerRequest.findByIdAndUpdate(req.params.id,req.body,{new:true}))}catch{res.status(400).json({message:'Could not update request.'})}})
+app.delete('/api/prayers/:id',auth,async(req,res)=>{try{await connectDB();await PrayerRequest.findByIdAndDelete(req.params.id);res.json({ok:true})}catch{res.status(400).json({message:'Could not delete request.'})}})
+
+app.post('/api/subscribers',async(req,res)=>{try{await connectDB();const item=await Subscriber.findOneAndUpdate({email:req.body.email?.toLowerCase()},{...req.body,active:true},{new:true,upsert:true,setDefaultsOnInsert:true});res.status(201).json(item)}catch{res.status(400).json({message:'Could not subscribe.'})}})
+app.get('/api/subscribers',auth,async(_req,res)=>{try{await connectDB();res.json(await Subscriber.find().sort({createdAt:-1}))}catch{res.status(500).json({message:'Could not load subscribers.'})}})
+
+app.get('/api/dashboard/stats',auth,async(_req,res)=>{try{await connectDB();const [sermons,events,prayers,messages,members,donations,registrations,followups]=await Promise.all([Sermon.countDocuments(),Event.countDocuments(),PrayerRequest.countDocuments({status:{$ne:'Archived'}}),ContactMessage.countDocuments({archived:false}),Member.countDocuments(),Donation.countDocuments({status:'success'}),EventRegistration.countDocuments({status:'registered'}),FollowUp.countDocuments({stage:{$ne:'closed'}})]);const revenue=(await Donation.aggregate([{$match:{status:'success'}},{$group:{_id:null,total:{$sum:'$amount'}}}]))[0]?.total||0;res.json({sermons,events,prayers,messages,members,donations,registrations,followups,revenue})}catch{res.status(500).json({message:'Could not load statistics.'})}})
+
+app.get('/api/activity',auth,allowRoles('super_admin','admin'),async(_req,res)=>{try{await connectDB();res.json(await ActivityLog.find().sort({createdAt:-1}).limit(100))}catch{res.status(500).json({message:'Could not load activity.'})}})
+app.get('/api/notifications',auth,async(_req,res)=>{try{await connectDB();res.json(await Notification.find().sort({createdAt:-1}).limit(50))}catch{res.status(500).json({message:'Could not load notifications.'})}})
+app.put('/api/notifications/:id',auth,async(req,res)=>{try{await connectDB();res.json(await Notification.findByIdAndUpdate(req.params.id,{read:true},{new:true}))}catch{res.status(400).json({message:'Could not update notification.'})}})
+
+app.get('/api/settings',async(_req,res)=>{try{await connectDB();res.json((await ChurchSettings.findOne())||{})}catch{res.status(500).json({message:'Could not load settings.'})}})
+app.put('/api/settings',auth,allowRoles('super_admin','admin'),async(req,res)=>{try{await connectDB();const item=await ChurchSettings.findOneAndUpdate({},req.body,{new:true,upsert:true});await logAction(req,'update','settings',item._id.toString());res.json(item)}catch{res.status(400).json({message:'Could not save settings.'})}})
+
+app.get('/api/admins',auth,allowRoles('super_admin'),async(_req,res)=>{try{await connectDB();res.json(await Admin.find().select('-passwordHash').sort({createdAt:-1}))}catch{res.status(500).json({message:'Could not load admins.'})}})
+app.post('/api/admins',auth,allowRoles('super_admin'),async(req,res)=>{try{await connectDB();const {email,password,name,role='editor'}=req.body;if(!email||!password)return res.status(400).json({message:'Email and password are required.'});const passwordHash=await bcrypt.hash(password,12);const item=await Admin.create({email,passwordHash,name,role});res.status(201).json({id:item._id,email:item.email,name:item.name,role:item.role})}catch(e){res.status(400).json({message:e.code===11000?'Admin already exists.':e.message})}})
+app.delete('/api/admins/:id',auth,allowRoles('super_admin'),async(req,res)=>{try{await connectDB();if(req.params.id===req.admin.id)return res.status(400).json({message:'You cannot delete yourself.'});await Admin.findByIdAndDelete(req.params.id);res.json({ok:true})}catch{res.status(400).json({message:'Could not delete admin.'})}})
+
+app.post('/api/events/:id/register',async(req,res)=>{try{await connectDB();const event=await Event.findById(req.params.id);if(!event||!event.published||!event.registrationOpen)return res.status(400).json({message:'Registration is not available.'});const item=await EventRegistration.create({eventId:event._id,eventTitle:event.title,...req.body});res.status(201).json(item)}catch(e){res.status(400).json({message:e.code===11000?'Already registered.':e.message})}})
+app.get('/api/event-registrations',auth,async(_req,res)=>{try{await connectDB();res.json(await EventRegistration.find().sort({createdAt:-1}))}catch{res.status(500).json({message:'Could not load registrations.'})}})
+
+// Paystack: server-side initialization keeps the secret key off the browser.
+app.post('/api/payments/initialize',async(req,res)=>{try{await connectDB();const {email,name,amount,type='offering'}=req.body;if(!email||!amount)return res.status(400).json({message:'Email and amount are required.'});const numeric=Number(amount);if(!Number.isFinite(numeric)||numeric<100)return res.status(400).json({message:'Enter a valid amount of at least ₦100.'});const reference=`TMG-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;const siteUrl=process.env.SITE_URL||`${req.protocol}://${req.get('host')}`;const donation=await Donation.create({reference,email,name,amount:numeric,type,status:'pending',metadata:{purpose:type}});const response=await fetch(`${paystackBase}/transaction/initialize`,{method:'POST',headers:{Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({email,amount:String(Math.round(numeric*100)),currency:'NGN',reference,callback_url:`${siteUrl}/give?reference=${encodeURIComponent(reference)}`,metadata:{name,type,donationId:donation._id.toString()}})});const data=await response.json();if(!response.ok||!data.status){donation.status='failed';await donation.save();return res.status(400).json({message:data.message||'Could not initialize Paystack transaction.'})}res.json({authorizationUrl:data.data.authorization_url,reference})}catch(e){res.status(500).json({message:'Payment initialization failed.'})}})
+
+app.get('/api/payments/verify/:reference',async(req,res)=>{try{await connectDB();const response=await fetch(`${paystackBase}/transaction/verify/${encodeURIComponent(req.params.reference)}`,{headers:{Authorization:`Bearer ${process.env.PAYSTACK_SECRET_KEY}`}});const data=await response.json();if(!response.ok||!data.status)return res.status(400).json({message:data.message||'Could not verify transaction.'});const tx=data.data;const donation=await Donation.findOne({reference:req.params.reference});if(!donation)return res.status(404).json({message:'Donation record not found.'});const expected=Math.round(donation.amount*100);if(tx.status==='success'&&Number(tx.amount)===expected){donation.status='success';donation.paystackTransactionId=String(tx.id);donation.paidAt=new Date();await donation.save()}else if(tx.status&&tx.status!=='success'){donation.status='failed';await donation.save()}res.json({status:tx.status,reference:tx.reference,amount:tx.amount,currency:tx.currency})}catch{res.status(500).json({message:'Payment verification failed.'})}})
+
+app.post('/api/payments/webhook',async(req,res)=>{try{const signature=req.headers['x-paystack-signature'];const expected=crypto.createHmac('sha512',process.env.PAYSTACK_SECRET_KEY||'').update(req.rawBody||JSON.stringify(req.body)).digest('hex');if(!signature||signature!==expected)return res.status(401).send('Invalid signature');res.sendStatus(200);if(req.body.event==='charge.success'){const tx=req.body.data;await connectDB();const donation=await Donation.findOne({reference:tx.reference});if(donation&&Number(tx.amount)===Math.round(donation.amount*100)){donation.status='success';donation.paystackTransactionId=String(tx.id);donation.paidAt=new Date();await donation.save();await Notification.create({title:'Donation received',message:`A ${donation.type} of ₦${donation.amount.toLocaleString()} was received.`,type:'payment',link:'/admin/donations'})}}}catch{if(!res.headersSent)res.sendStatus(200)}})
+app.get('/api/donations',auth,allowRoles('super_admin','admin'),async(_req,res)=>{try{await connectDB();res.json(await Donation.find().sort({createdAt:-1}).limit(500))}catch{res.status(500).json({message:'Could not load donations.'})}})
+
+app.use((_,res)=>res.status(404).json({message:'API route not found.'}))
+if (!process.env.VERCEL) {const PORT=process.env.API_PORT||5000;app.listen(PORT,()=>console.log(`TMG Ministries API running at http://localhost:${PORT}`))}
+export default app

@@ -1,0 +1,15 @@
+import { Routes, Route, useLocation } from 'react-router-dom'
+import { AnimatePresence } from 'framer-motion'
+import Home from './pages/Home'
+import About from './pages/About'
+import Contact from './pages/Contact'
+import Visit from './pages/Visit'
+import Login from './pages/Login'
+import Admin from './pages/Admin'
+import NotFound from './pages/NotFound'
+import EventRegister from './pages/EventRegister'
+import { ListingPage, Give, Prayer, MediaPage } from './pages/ContentPage'
+import PageTransition from './components/PageTransition'
+import ScrollProgress from './components/ScrollProgress'
+
+export default function App(){const location=useLocation();return <><ScrollProgress/><AnimatePresence mode="wait"><Routes location={location} key={location.pathname}><Route path="/" element={<PageTransition><Home/></PageTransition>}/><Route path="/about" element={<PageTransition><About/></PageTransition>}/><Route path="/ministries" element={<PageTransition><ListingPage type="ministries"/></PageTransition>}/><Route path="/sermons" element={<PageTransition><ListingPage type="sermons"/></PageTransition>}/><Route path="/events" element={<PageTransition><ListingPage type="events"/></PageTransition>}/><Route path="/events/:id/register" element={<PageTransition><EventRegister/></PageTransition>}/><Route path="/media" element={<PageTransition><MediaPage/></PageTransition>}/><Route path="/give" element={<PageTransition><Give/></PageTransition>}/><Route path="/prayer" element={<PageTransition><Prayer/></PageTransition>}/><Route path="/contact" element={<PageTransition><Contact/></PageTransition>}/><Route path="/visit" element={<PageTransition><Visit/></PageTransition>}/><Route path="/admin/login" element={<Login/>}/><Route path="/admin/*" element={<Admin/>}/><Route path="*" element={<NotFound/>}/></Routes></AnimatePresence></>}
